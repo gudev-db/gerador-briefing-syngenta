@@ -144,19 +144,18 @@ def extract_product_info(text: str) -> Tuple[str, str, str]:
 
 def generate_context(content, product_name, culture, action):
     """Gera o texto de contexto baseado nas informações"""
+    # Usar a descrição do produto do dicionário em vez do Gemini
+    description = PRODUCT_DESCRIPTIONS.get(product_name, "Descrição do produto não disponível.")
+    
     context = f"""
 **{product_name} - {culture.upper()} - {action.upper()}**
 Conteúdo: {content}
 
 Para essa pauta, vamos trabalhar com {product_name} na cultura do {culture}. O foco principal será {action}.
 
-Ao final, Reescreva por extenso a descrição do produto.
+{description}
 """
-    try:
-        response = modelo_texto.generate_content(context)
-        return response.text
-    except Exception as e:
-        return f"Erro ao gerar estratégia: {str(e)}"
+    return context
 
 def generate_platform_strategy(product_name, culture, action, content):
     """Gera estratégia por plataforma usando Gemini"""
@@ -208,9 +207,6 @@ def generate_briefing(content, product_name, culture, action):
     
     <div class='section-header'>📋 CONTEXTO E OBJETIVO</div>
     {context}
-    
-    <div class='section-header'>📝 DESCRIÇÃO DO PRODUTO</div>
-    {description}
     
     <div class='section-header'>🎯 ESTRATÉGIA POR PLATAFORMA</div>
     <div class='platform-strategy'>
@@ -305,6 +301,7 @@ if generate_btn and content_input:
                 st.write(f"**Data:** {data_input.strftime('%d/%m/%Y')}")
                 st.write(f"**Dia da semana:** {dia_semana}")
                 st.write(f"**Formato principal:** {formato_principal}")
+                st.write(f"**Descrição:** {PRODUCT_DESCRIPTIONS[product]}")
                 
         elif product:
             st.warning(f"Produto '{product}' não encontrado no dicionário. Verifique a grafia.")
