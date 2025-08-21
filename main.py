@@ -1,17 +1,71 @@
 import streamlit as st
+import pandas as pd
 import google.generativeai as genai
 import os
 from datetime import datetime
-from typing import Tuple
+from typing import Dict, List, Tuple
 import re
+import numpy as np
 
 # Configuração inicial
 st.set_page_config(
+    layout="wide",
     page_title="Gerador de Briefings - SYN",
     page_icon="📋"
 )
 
-# Dicionário de descrições de produtos
+# CSS personalizado
+st.markdown("""
+<style>
+    .main {
+        background-color: #f8f9fa;
+    }
+    .stButton button {
+        background-color: #1e88e5 !important;
+        color: white !important;
+        border-radius: 8px !important;
+        padding: 10px 24px !important;
+        font-weight: 500 !important;
+    }
+    .briefing-card {
+        background-color: white;
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border-left: 4px solid #1e88e5;
+    }
+    .product-header {
+        color: #1e88e5;
+        font-size: 1.4em;
+        font-weight: 600;
+        margin-bottom: 15px;
+    }
+    .section-header {
+        color: #333;
+        font-size: 1.2em;
+        font-weight: 600;
+        margin: 20px 0 10px 0;
+        padding-bottom: 5px;
+        border-bottom: 2px solid #e0e0e0;
+    }
+    .platform-strategy {
+        background-color: #f5f7fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
+    .calendar-cell {
+        background-color: #e3f2fd;
+        padding: 8px;
+        border-radius: 4px;
+        margin: 2px;
+        font-size: 0.9em;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Dicionário de descrições de produtos (baseado nos briefings anteriores)
 PRODUCT_DESCRIPTIONS = {
     "FORTENZA": "Tratamento de sementes inseticida, focado no Cerrado e posicionado para controle do complexo de lagartas e outras pragas iniciais. Comunicação focada no mercado 'on farm' (tratamento feito na fazenda).",
     "ALADE": "Fungicida para controle de doenças em soja, frequentemente posicionado em programa com Mitrion para controle de podridões de vagens e grãos.",
@@ -35,13 +89,6 @@ PRODUCT_DESCRIPTIONS = {
     "VERDADERO": "Produto relacionado à saúde do solo ou nutrição vegetal.",
     "MIRAVIS": "Fungicida da família Miravis para controle de doenças.",
     "MIRAVIS PRO": "Fungicida premium da família Miravis para controle avançado de doenças.",
-    "INSTIVO": "Lagarticida posicionado como especialista no controle de lagartas do gênero Spodoptera.",
-    "CYPRESS": "Fungicida posicionado para últimas aplicações na soja, consolidando o manejo de doenças.",
-    "CALARIS": "Herbicida composto por atrazina + mesotriona para controle de plantas daninhas no milho.",
-    "SPONTA": "Inseticida para algodão com PLINAZOLIN® technology para controle de bicudo e outras pragas.",
-    "INFLUX": "Inseticida lagarticida premium para controle de todas as lagartas, especialmente helicoverpa.",
-    "JOINER": "Inseticida acaricida com tecnologia PLINAZOLIN para culturas hortifrúti.",
-    "DUAL GOLD": "Herbicida para manejo de plantas daninhas.",
 }
 
 # Inicializar Gemini
@@ -58,13 +105,62 @@ else:
 # Título do aplicativo
 st.title("📋 Gerador de Briefings - SYN")
 st.markdown("""
-**Digite o conteúdo da célula do calendário para gerar um briefing completo no padrão SYN.**
+**Carregue o cronograma do Sheets e gere briefings completos seguindo o padrão SYN.**
 """)
 
-# Funções principais
+# Funções para processar o CSV específico
+def process_syn_calendar(df: pd.DataFrame) -> List[Tuple[datetime, str, str]]:
+    """Processa o formato específico do calendário SYN"""
+    events = []
+    
+    # Encontrar o mês e ano
+    month_year = None
+    for idx, row in df.iterrows():
+        for col in df.columns:
+            if "MAIO" in str(row[col]) and "2025" in str(row[col]):
+                month_year = "05/2025"
+                break
+    
+    # Mapear dias da semana para colunas
+    day_columns = {}
+    for idx, row in df.iterrows():
+        if "DOMINGO" in str(row.iloc[0]):
+            # Esta linha contém os dias da semana
+            for i, cell in enumerate(row):
+                if pd.notna(cell) and any(day in str(cell).upper() for day in ["DOMINGO", "SEGUNDA", "TERÇA", "QUARTA", "QUINTA", "SEXTA", "SÁBADO"]):
+                    day_columns[i] = str(cell).strip()
+            break
+    
+    # Processar eventos
+    for idx, row in df.iterrows():
+        for col_idx, cell in enumerate(row):
+            if pd.notna(cell) and col_idx in day_columns and col_idx > 0:
+                content = str(cell).strip()
+                if content and not any(x in content for x in ["🔵", "🟠", "🟢", "🔴", "🟣", "🔃", "📲", "Anotações"]):
+                    # Tentar extrair a data
+                    try:
+                        day_num = None
+                        # Verificar se há número de dia nesta célula ou anterior
+                        for check_idx in [col_idx - 1, col_idx]:
+                            if check_idx < len(row) and pd.notna(row.iloc[check_idx]):
+                                try:
+                                    day_num = int(str(row.iloc[check_idx]).strip())
+                                    break
+                                except ValueError:
+                                    continue
+                        
+                        if day_num:
+                            date_str = f"{day_num:02d}/{month_year}"
+                            date_obj = datetime.strptime(date_str, "%d/%m/%Y")
+                            events.append((date_obj, content, day_columns[col_idx]))
+                    except:
+                        continue
+    
+    return events
+
 def extract_product_info(text: str) -> Tuple[str, str, str]:
     """Extrai informações do produto do texto da célula"""
-    if not text or not text.strip():
+    if pd.isna(text) or not text.strip():
         return None, None, None
     
     text = str(text).strip()
@@ -74,9 +170,9 @@ def extract_product_info(text: str) -> Tuple[str, str, str]:
     
     # Padrões para extração
     patterns = {
-        'product': r'\b([A-Z][A-Za-z\s]+(?:PRO|S|NEO|LLI|ELITE|COMPLETO|DUO|FLEXI|PLENO|XTRA)?)\b',
-        'culture': r'\b(soja|milho|algodão|cana|trigo|HF|café|citrus|batata|melão|uva|tomate|multi)\b',
-        'action': r'\b(depoimento|resultados|série|reforço|controle|lançamento|importância|jornada|conceito|vídeo|ação|diferenciais|awareness|problemática|glossário|manejo|aplicação|posicionamento)\b'
+        'product': r'\b([A-Z][A-Z\s]+(?:PRO|S|NEO|LLI|ELITE|COMPLETO|DUO|FLEXI)?)\b',
+        'culture': r'\b(soja|milho|algodão|cana|trigo|HF|café|citrus|batata|multi)\b',
+        'action': r'\b(depoimento|resultados|série|reforço|controle|lançamento|importância|jornada|conceito|vídeo|ação|diferenciais)\b'
     }
     
     product_match = re.search(patterns['product'], clean_text, re.IGNORECASE)
@@ -85,140 +181,219 @@ def extract_product_info(text: str) -> Tuple[str, str, str]:
     
     product = product_match.group(1).strip().upper() if product_match else None
     culture = culture_match.group(0).lower() if culture_match else "multi"
-    action = action_match.group(0).lower() if action_match else "conscientização"
+    action = action_match.group(0).lower() if action_match else "awareness"
     
     return product, culture, action
 
-def generate_briefing(content: str, product_name: str, culture: str, action: str, data_input: datetime, formato_principal: str) -> str:
-    """Gera um briefing completo no formato SYN"""
+def generate_context(date, content, day_of_week, product_name, culture, action):
+    """Gera o texto de contexto baseado nas informações"""
+    date_str = date.strftime("%d/%m/%Y") if hasattr(date, 'strftime') else "Data não especificada"
     
-    # Formatar data
-    data_str = data_input.strftime("%d/%m")
-    
-    # Determinar mês em português
-    meses = {
-        1: "JANEIRO", 2: "FEVEREIRO", 3: "MARÇO", 4: "ABRIL",
-        5: "MAIO", 6: "JUNHO", 7: "JULHO", 8: "AGOSTO",
-        9: "SETEMBRO", 10: "OUTUBRO", 11: "NOVEMBRO", 12: "DEZEMBRO"
-    }
-    mes = meses[data_input.month]
-    
-    # Determinar categoria baseada na cultura
-    if culture in ["soja", "milho", "algodão", "trigo", "cana", "café"]:
-        categoria = culture.upper()
-    elif culture in ["batata", "tomate", "melão", "uva"]:
-        categoria = "HF"
-    else:
-        categoria = "MULTI"
-    
-    description = PRODUCT_DESCRIPTIONS.get(product_name, "Descrição do produto não disponível.")
-    
-    # Gerar briefing no formato correto
-    briefing = f"""CALENDÁRIO DE PAUTAS - SYN
+    context = f"""
+**{product_name} - {culture.upper()} - {action.upper()}**
+Data prevista: {date_str} ({day_of_week})
+Conteúdo: {content}
 
-{mes} - {categoria}
-{content.upper()}
-Data prevista: {data_str}
-Sugestão: {formato_principal}
-
-{description}
-
-Para essa pauta, a ser publicada na editoria {categoria}, vamos trabalhar com {product_name} na cultura do {culture}. O foco principal será {action}.
-
-A ideia é desenvolver um conteúdo que {action} do produto, mostrando seus benefícios e diferenciais para o produtor.
-
-Algumas fontes de informações:
-- Portal Mais Agro: https://maisagro.syngenta.com.br
-- Material técnico do produto
-- Resultados de campo e depoimentos
-
-Pontos de atenção:
-- Manter tom técnico e informativo
-- Evitar linguagem alarmista
-- Incluir CTAs para o portal Mais Agro
-- Seguir guidelines de marca Syngenta
-
-Para as redes sociais, podemos trazer os principais benefícios do produto, convidando o público a saber mais no blog.
+Para essa pauta, vamos trabalhar com {product_name} na cultura do {culture}. O foco principal será {action}.
 """
+    return context
+
+def generate_platform_strategy(product_name, culture, action, content):
+    """Gera estratégia por plataforma usando Gemini"""
+    if not gemini_api_key:
+        return "API key do Gemini não configurada. Estratégias por plataforma não disponíveis."
     
+    prompt = f"""
+    Como especialista em mídias sociais para o agronegócio Syngenta, crie uma estratégia de conteúdo detalhada:
+
+    **PRODUTO:** {product_name}
+    **CULTURA:** {culture}
+    **AÇÃO:** {action}
+    **CONTEÚDO ORIGINAL:** {content}
+    **DESCRIÇÃO DO PRODUTO:** {PRODUCT_DESCRIPTIONS.get(product_name, 'Produto agrícola Syngenta')}
+
+    **FORNECER ESTRATÉGIA PARA:**
+    - Instagram (Feed, Reels, Stories)
+    - Facebook 
+    - LinkedIn
+    - WhatsApp Business
+    - YouTube
+    - Portal Mais Agro (blog)
+
+    **INCLUIR PARA CADA PLATAFORMA:**
+    1. Tipo de conteúdo recomendado
+    2. Formato ideal (vídeo, carrossel, estático, etc.)
+    3. Tom de voz apropriado
+    4. CTA específico
+    5. Melhores práticas
+
+    **FORMATO:** Markdown com seções claras
+    """
+    
+    try:
+        response = modelo_texto.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Erro ao gerar estratégia: {str(e)}"
+
+def generate_briefing(date, content, day_of_week, product_name, culture, action):
+    """Gera um briefing completo"""
+    description = PRODUCT_DESCRIPTIONS.get(product_name, "Descrição do produto não disponível.")
+    context = generate_context(date, content, day_of_week, product_name, culture, action)
+    platform_strategy = generate_platform_strategy(product_name, culture, action, content)
+    
+    briefing = f"""
+<div class='briefing-card'>
+    <div class='product-header'>{product_name} - {culture.upper()} - {action.upper()}</div>
+    
+    <div class='section-header'>📋 CONTEXTO E OBJETIVO</div>
+    {context}
+    
+    <div class='section-header'>📝 DESCRIÇÃO DO PRODUTO</div>
+    {description}
+    
+    <div class='section-header'>🎯 ESTRATÉGIA POR PLATAFORMA</div>
+    <div class='platform-strategy'>
+        {platform_strategy}
+    </div>
+    
+    <div class='section-header'>📊 FORMATOS SUGERIDOS</div>
+    <ul>
+        <li><strong>Instagram:</strong> Reels + Stories + Feed post</li>
+        <li><strong>Facebook:</strong> Carrossel + Link post</li>
+        <li><strong>LinkedIn:</strong> Artigo + Post informativo</li>
+        <li><strong>WhatsApp:</strong> Card informativo + Link</li>
+        <li><strong>YouTube:</strong> Shorts + Vídeo explicativo</li>
+        <li><strong>Portal Mais Agro:</strong> Blog post + Webstories</li>
+    </ul>
+    
+    <div class='section-header'>📞 CONTATOS E OBSERVAÇÕES</div>
+    <ul>
+        <li>Validar com especialista técnico</li>
+        <li>Checar disponibilidade de imagens/vídeos</li>
+        <li>Incluir CTA para portal Mais Agro</li>
+        <li>Seguir guidelines de marca Syngenta</li>
+        <li>Revisar compliance regulatório</li>
+    </ul>
+</div>
+"""
     return briefing
 
 # Interface principal
-st.markdown("### 📝 Digite o conteúdo da célula do calendário")
-
-content_input = st.text_area(
-    "Conteúdo da célula:",
-    placeholder="Ex: megafol - série - potencial máximo, todo o tempo",
-    height=100,
-    help="Cole aqui o conteúdo exato da célula do calendário do Sheets"
+uploaded_file = st.file_uploader(
+    "📤 Faça upload do cronograma do Sheets (CSV)",
+    type=['csv'],
+    help="O arquivo deve seguir o formato do calendário SYN com matriz de conteúdo"
 )
 
-# Campos opcionais para ajuste
-col1, col2 = st.columns(2)
-
-with col1:
-    data_input = st.date_input("Data prevista:", value=datetime.now())
-
-with col2:
-    formato_principal = st.selectbox(
-        "Formato principal:",
-        ["Reels + capa", "Carrossel + stories", "Blog + redes", "Vídeo + stories", "Multiplataforma"]
-    )
-
-generate_btn = st.button("🚀 Gerar Briefing", type="primary")
-
-# Processamento e exibição do briefing
-if generate_btn and content_input:
-    with st.spinner("Analisando conteúdo e gerando briefing..."):
-        # Extrair informações do produto
-        product, culture, action = extract_product_info(content_input)
+if uploaded_file:
+    try:
+        # Ler o CSV mantendo todas as colunas e linhas
+        df = pd.read_csv(uploaded_file, header=None)
         
-        if product and product in PRODUCT_DESCRIPTIONS:
-            # Gerar briefing completo
-            briefing = generate_briefing(content_input, product, culture, action, data_input, formato_principal)
+        st.success(f"✅ Arquivo carregado com {len(df)} linhas e {len(df.columns)} colunas")
+        
+        # Mostrar preview do arquivo
+        with st.expander("📊 Visualização do Arquivo Carregado"):
+            st.dataframe(df.head(10))
+        
+        # Processar eventos do calendário
+        events = process_syn_calendar(df)
+        
+        if events:
+            st.success(f"🎯 {len(events)} eventos identificados no calendário")
             
-            # Exibir briefing
-            st.markdown("## 📋 Briefing Gerado")
-            st.text_area("Briefing:", value=briefing, height=400)
+            # Exibir eventos encontrados
+            with st.expander("📅 Eventos Identificados", expanded=True):
+                for date, content, day in events:
+                    st.markdown(f"<div class='calendar-cell'>{date.strftime('%d/%m')} ({day}): {content}</div>", 
+                               unsafe_allow_html=True)
             
-            # Botão de download
-            st.download_button(
-                label="📥 Baixar Briefing",
-                data=briefing,
-                file_name=f"briefing_{product}_{data_input.strftime('%Y%m%d')}.txt",
-                mime="text/plain"
-            )
+            # Processar briefings
+            briefings = []
+            for date, content, day in events:
+                product, culture, action = extract_product_info(content)
+                
+                if product and product in PRODUCT_DESCRIPTIONS:
+                    briefing = generate_briefing(date, content, day, product, culture, action)
+                    briefings.append((date, product, content, briefing))
             
-        elif product:
-            st.warning(f"Produto '{product}' não encontrado no dicionário. Verifique a grafia.")
-            st.info("Produtos disponíveis: " + ", ".join(list(PRODUCT_DESCRIPTIONS.keys())[:10]) + "...")
+            # Exibir briefings
+            if briefings:
+                st.markdown(f"## 📋 Briefings Gerados ({len(briefings)})")
+                
+                for date, product, content, briefing in briefings:
+                    with st.expander(f"{date.strftime('%d/%m')} - {product} - {content[:50]}...", expanded=True):
+                        st.markdown(briefing, unsafe_allow_html=True)
+                        
+                        # Botão de download individual
+                        st.download_button(
+                            label=f"📥 Baixar briefing {product}",
+                            data=briefing,
+                            file_name=f"briefing_{product}_{date.strftime('%Y%m%d')}.html",
+                            mime="text/html",
+                            key=f"download_{product}_{date.strftime('%Y%m%d')}"
+                        )
+                
+                # Botão para baixar todos os briefings
+                all_briefings = "\n\n".join([f"# Briefing {product} - {date.strftime('%d/%m/%Y')}\n{briefing}" 
+                                           for date, product, content, briefing in briefings])
+                
+                st.download_button(
+                    label="📦 Baixar Todos os Briefings",
+                    data=all_briefings,
+                    file_name="todos_briefings_syn.html",
+                    mime="text/html"
+                )
+            else:
+                st.warning("Nenhum produto reconhecido encontrado nos eventos.")
+                
         else:
-            st.error("Não foi possível identificar um produto no conteúdo. Tente formatos como:")
-            st.code("""
-megafol - série - potencial máximo, todo o tempo
-verdavis - soja - depoimento produtor
-engeo pleno s - milho - controle percevejo
-miravis duo - algodão - reforço preventivo
-""")
+            st.warning("Não foi possível identificar eventos no calendário. Verifique o formato do arquivo.")
+            
+    except Exception as e:
+        st.error(f"Erro ao processar o arquivo: {str(e)}")
+        st.info("Certifique-se de que o arquivo segue o formato padrão do calendário SYN")
 
-# Seção de exemplos
-with st.expander("📚 Exemplos de Conteúdo", expanded=True):
+else:
+    # Exemplo de estrutura esperada
     st.markdown("""
-**Formatos Reconhecidos:**
-- `PRODUTO - CULTURA - AÇÃO`
-- `PRODUTO - AÇÃO`
-- `PRODUTO - CULTURA - TIPO DE CONTEÚDO`
-
-**Exemplos:**
-- `megafol - série - potencial máximo, todo o tempo`
-- `verdavis - milho - resultados do produto`
-- `engeo pleno s - soja - resultados GTEC`
-- `miravis duo - algodão - depoimento produtor`
-- `axial - trigo - reforço pós-emergente`
-- `manejo limpo - importância manejo antecipado`
-- `certano HF - a jornada de certano`
-""")
+    ### 📝 Formato Esperado do CSV:
+    
+    O arquivo deve seguir exatamente o formato do calendário SYN:
+    
+    | | | CX | herbicidas | seedcare | fungicidas | inseticidas | biológicos | culturas |
+    |---|---|---|---|---|---|---|---|---|
+    | | | CALENDÁRIO DE PAUTAS | | | | MAIO | | 2025 |
+    | | | 🔵- dia a dia do campo | 🟠- inov e tendências | 🟢- sustentabilidade | 🔴- mercado e safra | 🟣 - especialistas | 🔃 webstories | 📲 UGC |
+    | | | DOMINGO | SEGUNDA | TERÇA | QUARTA | QUINTA | SEXTA | SÁBADO |
+    | | | | | | | 1 | 2 | 3 |
+    | | | | | | | fortenza - a jornada... | 📲 alade - depoimento... | |
+    | | | | | | | | verdavis - milho... | |
+    
+    ### 🎯 Produtos Reconhecidos:
+    """
+    )
+    
+    # Lista de produtos reconhecidos
+    col1, col2, col3 = st.columns(3)
+    products = list(PRODUCT_DESCRIPTIONS.keys())
+    
+    with col1:
+        for product in products[:8]:
+            st.write(f"• {product}")
+    
+    with col2:
+        for product in products[8:16]:
+            st.write(f"• {product}")
+    
+    with col3:
+        for product in products[16:]:
+            st.write(f"• {product}")
 
 # Rodapé
 st.markdown("---")
-st.caption("Ferramenta de geração automática de briefings - Padrão SYN 📋")
+st.caption("""
+Ferramenta de geração automática de briefings - Padrão SYN 📋
+Desenvolvido para processar calendários do Sheets e gerar briefings completos.
+""")
