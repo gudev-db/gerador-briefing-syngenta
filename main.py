@@ -186,6 +186,7 @@ def extract_product_info(text: str) -> Tuple[str, str, str]:
     return product, culture, action
 
 def generate_context(date, content, day_of_week, product_name, culture, action):
+    
     """Gera o texto de contexto baseado nas informações"""
     date_str = date.strftime("%d/%m/%Y") if hasattr(date, 'strftime') else "Data não especificada"
     
@@ -196,7 +197,15 @@ Conteúdo: {content}
 
 Para essa pauta, vamos trabalhar com {product_name} na cultura do {culture}. O foco principal será {action}.
 """
-    return context
+    
+    
+    
+    
+    try:
+        response = modelo_texto.generate_content(context)
+        return response1.text
+    except Exception as e:
+        return f"Erro ao gerar estratégia: {str(e)}"
 
 def generate_platform_strategy(product_name, culture, action, content):
     """Gera estratégia por plataforma usando Gemini"""
