@@ -150,7 +150,7 @@ Conteúdo: {content}
 
 Para essa pauta, vamos trabalhar com {product_name} na cultura do {culture}. O foco principal será {action}.
 
-Reescreva por extenso a descrição do produto.
+Ao final, Reescreva por extenso a descrição do produto.
 """
     try:
         response = modelo_texto.generate_content(context)
