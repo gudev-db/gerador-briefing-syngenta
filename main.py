@@ -142,20 +142,49 @@ def extract_product_info(text: str) -> Tuple[str, str, str]:
     
     return product, culture, action
 
-def generate_context(content, product_name, culture, action):
-    """Gera o texto de contexto baseado nas informações"""
-    # Usar a descrição do produto do dicionário em vez do Gemini
-    description = PRODUCT_DESCRIPTIONS.get(product_name, "Descrição do produto não disponível.")
+def generate_context(content, product_name, culture, action, data_input, formato_principal):
+    """Gera o texto de contexto discursivo usando LLM"""
+    if not gemini_api_key:
+        return "API key do Gemini não configurada. Contexto não disponível."
     
-    context = f"""
-**{product_name} - {culture.upper()} - {action.upper()}**
-Conteúdo: {content}
+    # Determinar mês em português
+    meses = {
+        1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril",
+        5: "maio", 6: "junho", 7: "julho", 8: "agosto",
+        9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro"
+    }
+    mes = meses[data_input.month]
+    
+    prompt = f"""
+    Como redator especializado em agronegócio da Syngenta, elabore um texto contextual discursivo de 3-4 parágrafos para uma pauta de conteúdo.
 
-Para essa pauta, vamos trabalhar com {product_name} na cultura do {culture}. O foco principal será {action}.
+    **Informações da pauta:**
+    - Produto: {product_name}
+    - Cultura: {culture}
+    - Ação/tema: {action}
+    - Mês de publicação: {mes}
+    - Formato principal: {formato_principal}
+    - Conteúdo original: {content}
 
-{description}
-"""
-    return context
+    **Descrição do produto:** {PRODUCT_DESCRIPTIONS.get(product_name, 'Produto agrícola Syngenta')}
+
+    **Instruções:**
+    - Escreva em formato discursivo e fluido, com 3-4 parágrafos bem estruturados
+    - Mantenha tom técnico mas acessível, adequado para produtores rurais
+    - Contextualize a importância do tema para a cultura e época do ano
+    - Explique por que este conteúdo é relevante neste momento
+    - Inclua considerações sobre o público-alvo e objetivos da comunicação
+    - Não repita literalmente a descrição do produto, mas a incorpore naturalmente no texto
+    - Use linguagem persuasiva mas factual, baseada em dados técnicos
+
+    **Formato:** Texto corrido em português brasileiro
+    """
+    
+    try:
+        response = modelo_texto.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Erro ao gerar contexto: {str(e)}"
 
 def generate_platform_strategy(product_name, culture, action, content):
     """Gera estratégia por plataforma usando Gemini"""
@@ -195,10 +224,10 @@ def generate_platform_strategy(product_name, culture, action, content):
     except Exception as e:
         return f"Erro ao gerar estratégia: {str(e)}"
 
-def generate_briefing(content, product_name, culture, action):
+def generate_briefing(content, product_name, culture, action, data_input, formato_principal):
     """Gera um briefing completo"""
     description = PRODUCT_DESCRIPTIONS.get(product_name, "Descrição do produto não disponível.")
-    context = generate_context(content, product_name, culture, action)
+    context = generate_context(content, product_name, culture, action, data_input, formato_principal)
     platform_strategy = generate_platform_strategy(product_name, culture, action, content)
     
     briefing = f"""
@@ -207,6 +236,9 @@ def generate_briefing(content, product_name, culture, action):
     
     <div class='section-header'>📋 CONTEXTO E OBJETIVO</div>
     {context}
+    
+    <div class='section-header'>📝 DESCRIÇÃO DO PRODUTO</div>
+    {description}
     
     <div class='section-header'>🎯 ESTRATÉGIA POR PLATAFORMA</div>
     <div class='platform-strategy'>
@@ -279,7 +311,7 @@ if generate_btn and content_input:
         
         if product and product in PRODUCT_DESCRIPTIONS:
             # Gerar briefing completo
-            briefing = generate_briefing(content_input, product, culture, action)
+            briefing = generate_briefing(content_input, product, culture, action, data_input, formato_principal)
             
             # Exibir briefing
             st.markdown("## 📋 Briefing Gerado")
