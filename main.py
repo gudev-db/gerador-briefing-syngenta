@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from typing import Dict, List, Tuple
 import re
+import io
 
 # Configuração inicial
 st.set_page_config(
@@ -203,82 +204,256 @@ CONTATOS E OBSERVAÇÕES
 - Incluir CTA para portal Mais Agro
 - Seguir guidelines de marca Syngenta
 - Revisar compliance regulatório
+
+DATA PREVISTA: {data_input.strftime('%d/%m/%Y')}
+DIA DA SEMANA: {dia_semana}
+FORMATO PRINCIPAL: {formato_principal}
 """
     return briefing
 
 # Interface principal
-st.markdown("### Digite o conteúdo da célula do calendário")
+st.markdown("### Opções de Geração")
 
-content_input = st.text_area(
-    "Conteúdo da célula:",
-    placeholder="Ex: megafol - série - potencial máximo, todo o tempo",
-    height=100,
-    help="Cole aqui o conteúdo exato da célula do calendário do Sheets"
-)
+# Abas para diferentes modos de operação
+tab1, tab2 = st.tabs(["Briefing Individual", "Processamento em Lote (CSV)"])
 
-# Campos opcionais para ajuste
-col1, col2, col3 = st.columns(3)
+with tab1:
+    st.markdown("### Digite o conteúdo da célula do calendário")
 
-with col1:
-    data_input = st.date_input("Data prevista:", value=datetime.now())
-
-with col2:
-    dia_semana = st.selectbox(
-        "Dia da semana:",
-        ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    content_input = st.text_area(
+        "Conteúdo da célula:",
+        placeholder="Ex: megafol - série - potencial máximo, todo o tempo",
+        height=100,
+        help="Cole aqui o conteúdo exato da célula do calendário do Sheets",
+        key="individual_content"
     )
 
-with col3:
-    formato_principal = st.selectbox(
-        "Formato principal:",
-        ["Reels + capa", "Carrossel + stories", "Blog + redes", "Vídeo + stories", "Multiplataforma"]
+    # Campos opcionais para ajuste
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        data_input = st.date_input("Data prevista:", value=datetime.now(), key="individual_date")
+
+    with col2:
+        dia_semana = st.selectbox(
+            "Dia da semana:",
+            ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"],
+            key="individual_day"
+        )
+
+    with col3:
+        formato_principal = st.selectbox(
+            "Formato principal:",
+            ["Reels + capa", "Carrossel + stories", "Blog + redes", "Vídeo + stories", "Multiplataforma"],
+            key="individual_format"
+        )
+
+    generate_btn = st.button("Gerar Briefing Individual", type="primary", key="individual_btn")
+
+    # Processamento e exibição do briefing individual
+    if generate_btn and content_input:
+        with st.spinner("Analisando conteúdo e gerando briefing..."):
+            # Extrair informações do produto
+            product, culture, action = extract_product_info(content_input)
+            
+            if product and product in PRODUCT_DESCRIPTIONS:
+                # Gerar briefing completo
+                briefing = generate_briefing(content_input, product, culture, action, data_input, formato_principal)
+                
+                # Exibir briefing
+                st.markdown("## Briefing Gerado")
+                st.text(briefing)
+                
+                # Botão de download
+                st.download_button(
+                    label="Baixar Briefing",
+                    data=briefing,
+                    file_name=f"briefing_{product}_{data_input.strftime('%Y%m%d')}.txt",
+                    mime="text/plain",
+                    key="individual_download"
+                )
+                
+                # Informações extras
+                with st.expander("Informações Extraídas"):
+                    st.write(f"Produto: {product}")
+                    st.write(f"Cultura: {culture}")
+                    st.write(f"Ação: {action}")
+                    st.write(f"Data: {data_input.strftime('%d/%m/%Y')}")
+                    st.write(f"Dia da semana: {dia_semana}")
+                    st.write(f"Formato principal: {formato_principal}")
+                    st.write(f"Descrição: {PRODUCT_DESCRIPTIONS[product]}")
+                    
+            elif product:
+                st.warning(f"Produto '{product}' não encontrado no dicionário. Verifique a grafia.")
+                st.info("Produtos disponíveis: " + ", ".join(list(PRODUCT_DESCRIPTIONS.keys())[:10]) + "...")
+            else:
+                st.error("Não foi possível identificar um produto no conteúdo. Tente formatos como:")
+                st.code("""
+                megafol - série - potencial máximo, todo o tempo
+                verdavis - soja - depoimento produtor
+                engeo pleno s - milho - controle percevejo
+                miravis duo - algodão - reforço preventivo
+                """)
+
+with tab2:
+    st.markdown("### Processamento em Lote via CSV")
+    
+    st.info("""
+    Faça upload de um arquivo CSV exportado do Google Sheets.
+    O sistema irá processar cada linha a partir da segunda linha (ignorando cabeçalhos)
+    e gerar briefings apenas para as linhas que contêm produtos reconhecidos.
+    """)
+    
+    uploaded_file = st.file_uploader(
+        "Escolha o arquivo CSV", 
+        type=['csv'],
+        help="Selecione o arquivo CSV exportado do Google Sheets"
     )
-
-generate_btn = st.button("Gerar Briefing", type="primary")
-
-# Processamento e exibição do briefing
-if generate_btn and content_input:
-    with st.spinner("Analisando conteúdo e gerando briefing..."):
-        # Extrair informações do produto
-        product, culture, action = extract_product_info(content_input)
-        
-        if product and product in PRODUCT_DESCRIPTIONS:
-            # Gerar briefing completo
-            briefing = generate_briefing(content_input, product, culture, action, data_input, formato_principal)
+    
+    if uploaded_file is not None:
+        try:
+            # Ler o CSV
+            df = pd.read_csv(uploaded_file)
+            st.success(f"CSV carregado com sucesso! {len(df)} linhas encontradas.")
             
-            # Exibir briefing
-            st.markdown("## Briefing Gerado")
-            st.text(briefing)
+            # Mostrar prévia do arquivo
+            with st.expander("Visualizar primeiras linhas do CSV"):
+                st.dataframe(df.head())
             
-            # Botão de download
-            st.download_button(
-                label="Baixar Briefing",
-                data=briefing,
-                file_name=f"briefing_{product}_{data_input.strftime('%Y%m%d')}.txt",
-                mime="text/plain"
+            # Configurações para processamento em lote
+            st.markdown("### Configurações do Processamento em Lote")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                data_padrao = st.date_input(
+                    "Data padrão para todos os briefings:",
+                    value=datetime.now(),
+                    key="batch_date"
+                )
+            
+            with col2:
+                formato_padrao = st.selectbox(
+                    "Formato principal padrão:",
+                    ["Reels + capa", "Carrossel + stories", "Blog + redes", "Vídeo + stories", "Multiplataforma"],
+                    key="batch_format"
+                )
+            
+            # Identificar coluna com conteúdo
+            colunas = df.columns.tolist()
+            coluna_conteudo = st.selectbox(
+                "Selecione a coluna que contém o conteúdo das células:",
+                colunas,
+                help="Selecione a coluna que contém os textos das células do calendário"
             )
             
-            # Informações extras
-            with st.expander("Informações Extraídas"):
-                st.write(f"Produto: {product}")
-                st.write(f"Cultura: {culture}")
-                st.write(f"Ação: {action}")
-                st.write(f"Data: {data_input.strftime('%d/%m/%Y')}")
-                st.write(f"Dia da semana: {dia_semana}")
-                st.write(f"Formato principal: {formato_principal}")
-                st.write(f"Descrição: {PRODUCT_DESCRIPTIONS[product]}")
+            processar_lote = st.button("Processar CSV e Gerar Briefings", type="primary", key="batch_btn")
+            
+            if processar_lote:
+                briefings_gerados = []
+                linhas_processadas = 0
+                linhas_com_produto = 0
                 
-        elif product:
-            st.warning(f"Produto '{product}' não encontrado no dicionário. Verifique a grafia.")
-            st.info("Produtos disponíveis: " + ", ".join(list(PRODUCT_DESCRIPTIONS.keys())[:10]) + "...")
-        else:
-            st.error("Não foi possível identificar um produto no conteúdo. Tente formatos como:")
-            st.code("""
-            megafol - série - potencial máximo, todo o tempo
-            verdavis - soja - depoimento produtor
-            engeo pleno s - milho - controle percevejo
-            miravis duo - algodão - reforço preventivo
-            """)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for index, row in df.iterrows():
+                    linhas_processadas += 1
+                    progress_bar.progress(linhas_processadas / len(df))
+                    status_text.text(f"Processando linha {linhas_processadas} de {len(df)}...")
+                    
+                    # Pular a primeira linha (cabeçalhos)
+                    if index == 0:
+                        continue
+                    
+                    # Obter conteúdo da célula
+                    content = str(row[coluna_conteudo]) if pd.notna(row[coluna_conteudo]) else ""
+                    
+                    if content:
+                        # Extrair informações do produto
+                        product, culture, action = extract_product_info(content)
+                        
+                        if product and product in PRODUCT_DESCRIPTIONS:
+                            linhas_com_produto += 1
+                            # Gerar briefing
+                            briefing = generate_briefing(
+                                content, 
+                                product, 
+                                culture, 
+                                action, 
+                                data_padrao, 
+                                formato_padrao
+                            )
+                            
+                            briefings_gerados.append({
+                                'linha': index + 1,
+                                'produto': product,
+                                'conteudo': content,
+                                'briefing': briefing,
+                                'arquivo': f"briefing_{product}_{index+1}.txt"
+                            })
+                
+                progress_bar.empty()
+                status_text.empty()
+                
+                # Resultados do processamento
+                st.success(f"Processamento concluído! {linhas_com_produto} briefings gerados de {linhas_processadas-1} linhas processadas.")
+                
+                if briefings_gerados:
+                    # Exibir resumo
+                    st.markdown("### Briefings Gerados")
+                    resumo_df = pd.DataFrame([{
+                        'Linha': b['linha'],
+                        'Produto': b['produto'],
+                        'Conteúdo': b['conteudo'][:50] + '...' if len(b['conteudo']) > 50 else b['conteudo']
+                    } for b in briefings_gerados])
+                    
+                    st.dataframe(resumo_df)
+                    
+                    # Criar arquivo ZIP com todos os briefings
+                    import zipfile
+                    from io import BytesIO
+                    
+                    zip_buffer = BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for briefing_info in briefings_gerados:
+                            zip_file.writestr(
+                                briefing_info['arquivo'], 
+                                briefing_info['briefing']
+                            )
+                    
+                    zip_buffer.seek(0)
+                    
+                    # Botão para download do ZIP
+                    st.download_button(
+                        label="📥 Baixar Todos os Briefings (ZIP)",
+                        data=zip_buffer,
+                        file_name="briefings_syngenta.zip",
+                        mime="application/zip",
+                        key="batch_download_zip"
+                    )
+                    
+                    # Também permitir download individual
+                    st.markdown("---")
+                    st.markdown("### Download Individual")
+                    
+                    for briefing_info in briefings_gerados:
+                        col1, col2 = st.columns([3, 1])
+                        with col1:
+                            st.text(f"Linha {briefing_info['linha']}: {briefing_info['produto']} - {briefing_info['conteudo'][:30]}...")
+                        with col2:
+                            st.download_button(
+                                label="📄 Baixar",
+                                data=briefing_info['briefing'],
+                                file_name=briefing_info['arquivo'],
+                                mime="text/plain",
+                                key=f"download_{briefing_info['linha']}"
+                            )
+                else:
+                    st.warning("Nenhum briefing foi gerado. Verifique se o CSV contém produtos reconhecidos.")
+                    st.info("Produtos reconhecidos: " + ", ".join(list(PRODUCT_DESCRIPTIONS.keys())[:15]) + "...")
+                    
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo CSV: {str(e)}")
 
 # Seção de exemplos
 with st.expander("Exemplos de Conteúdo", expanded=True):
